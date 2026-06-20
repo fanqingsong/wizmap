@@ -1,0 +1,79 @@
+# Development override — hot reload for frontend (Vite HMR) and backend
+# (uvicorn --reload), plus Celery auto-restart.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# (or set COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml in .env)
+#
+# The base docker-compose.yml remains a production-style setup; this file
+# only overrides the app services, leaving postgres/redis/minio untouched.
+
+services:
+  # ---- Frontend: Vite dev server with HMR ----
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: wizmap-frontend-dev
+    ports:
+      - "3002:3000"
+    environment:
+      - NODE_ENV=development
+    volumes:
+      # Live source: edits on the host are reflected in the container.
+      - ./frontend:/app
+      # Keep the container-installed node_modules; don't shadow it with the
+      # host's (possibly absent) node_modules.
+      - /app/node_modules
+      - /app/dist
+      - /app/.vite
+    networks:
+      - wizmap-network
+
+  # ---- Backend: uvicorn with --reload ----
+  backend:
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/app
+    environment:
+      - DEBUG=true
+      - DATABASE_URL=postgresql://wizmap:wizmap@postgres:5432/wizmap
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=wizmap-uploads
+      - MINIO_SECURE=false
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # CORS_ORIGINS left at the config default (includes localhost:3000 and :3001)
+    volumes:
+      # Live backend source: Python edits trigger uvicorn reload.
+      - ./backend:/app
+    networks:
+      - wizmap-network
+
+  # ---- Celery worker: auto-restart on .py changes ----
+  # `watchfiles` CLI ships with uvicorn[standard], so no extra dependency.
+  celery_worker:
+    command: >
+      watchfiles
+      "celery -A app.workers.celery_worker worker --loglevel=info"
+      /app/app
+    environment:
+      - DATABASE_URL=postgresql://wizmap:wizmap@postgres:5432/wizmap
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=wizmap-uploads
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    networks:
+      - wizmap-network

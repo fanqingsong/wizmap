@@ -1,0 +1,77 @@
+#!/bin/bash
+
+# WizMap Services Status Check Script
+# Shows the status of all services
+
+set -e
+
+echo "📊 WizMap Services Status"
+echo "=========================================="
+
+# Check if Docker is running
+if ! docker info > /dev/null 2>&1; then
+    echo "❌ Error: Docker is not running."
+    exit 1
+fi
+
+# Change to project root directory
+cd "$(dirname "$0")/.."
+
+# Get service status
+echo "🔍 Checking services..."
+echo ""
+
+if docker compose ps | grep -q "Up"; then
+    echo "🟢 Services are running"
+    echo ""
+    echo "📋 Service Details:"
+    docker compose ps --format "table {{.Service}}\t{{.Status}}\t{{.Ports}}"
+    echo ""
+
+    # Show service URLs
+    echo "🌐 Access URLs:"
+
+    # Check if development mode
+    if docker compose -f docker-compose.yml -f docker-compose.dev.yml ps 2>/dev/null | grep -q "wizmap-frontend-dev.*Up"; then
+        echo "  Frontend (Dev):  http://localhost:3002 (Vite HMR)"
+        echo "  Frontend (Prod): http://localhost:3001 (Nginx)"
+    else
+        echo "  Frontend:      http://localhost:3001 (Nginx)"
+    fi
+
+    echo "  Backend API:   http://localhost:8080"
+    echo "  API Docs:     http://localhost:8080/docs"
+    echo "  MinIO Console: http://localhost:9101"
+    echo ""
+
+    # Test backend health
+    echo "🏥 Health Checks:"
+    if curl -s http://localhost:8080/health > /dev/null 2>&1; then
+        echo "  ✅ Backend: Healthy"
+    else
+        echo "  ❌ Backend: Unreachable"
+    fi
+
+    # Test frontend
+    if curl -s http://localhost:3001 > /dev/null 2>&1; then
+        echo "  ✅ Frontend: Accessible"
+    else
+        echo "  ❌ Frontend: Unreachable"
+    fi
+
+    echo ""
+    echo "💡 Management Commands:"
+    echo "  - View logs: docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f"
+    echo "  - Restart:   ./bin/stop && ./bin/start_dev.sh"
+    echo "  - Stop:      ./bin/stop"
+
+else
+    echo "🔴 No services are running"
+    echo ""
+    echo "💡 To start services:"
+    echo "  Development: ./bin/start_dev.sh"
+    echo "  Production: ./bin/start_prod.sh"
+fi
+
+echo ""
+echo "=========================================="

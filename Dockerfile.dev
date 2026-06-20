@@ -1,0 +1,20 @@
+# Development image for WizMap frontend — runs the Vite dev server with HMR.
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Use a faster registry
+RUN npm config set registry https://registry.npmmirror.com
+
+# Install dependencies first so they are cached in their own layer.
+COPY frontend/package.json ./
+RUN npm install --no-audit --no-fund --timeout=180000
+
+# Source code is bind-mounted at runtime (see docker-compose.dev.yml),
+# so changes on the host are reflected in the container immediately.
+COPY frontend/ .
+
+EXPOSE 3000
+
+# --host 0.0.0.0 lets the dev server be reached from outside the container.
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

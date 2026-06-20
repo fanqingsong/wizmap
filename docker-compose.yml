@@ -1,0 +1,117 @@
+services:
+  # Frontend - Svelte application with nginx
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wizmap-frontend
+    ports:
+      - "3001:80"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    labels:
+      - "com.wizmap.description=WizMap Frontend"
+      - "com.wizmap.version=0.1.7"
+    networks:
+      - wizmap-network
+
+  # Backend - FastAPI application
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wizmap-backend
+    ports:
+      - "8080:8000"
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://wizmap:wizmap@postgres:5432/wizmap
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=wizmap-uploads
+      - MINIO_SECURE=false
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    networks:
+      - wizmap-network
+
+  # Celery Worker - Background task processing
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wizmap-celery-worker
+    restart: unless-stopped
+    command: celery -A app.workers.celery_worker worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://wizmap:wizmap@postgres:5432/wizmap
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=wizmap-uploads
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    networks:
+      - wizmap-network
+
+  # PostgreSQL - Database with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: wizmap-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=wizmap
+      - POSTGRES_PASSWORD=wizmap
+      - POSTGRES_DB=wizmap
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - wizmap-network
+
+  # Redis - Message broker and cache
+  redis:
+    image: redis:7-alpine
+    container_name: wizmap-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - wizmap-network
+
+  # MinIO - Object storage
+  minio:
+    image: minio/minio:latest
+    container_name: wizmap-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio_data:/data
+    networks:
+      - wizmap-network
+
+networks:
+  wizmap-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

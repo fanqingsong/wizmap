@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import {
     getFloatingWindowStore,
     getFooterStore,
@@ -14,6 +15,25 @@
   let dataURL: string | null = null;
   let gridURL: string | null = null;
   let notebookMode = false;
+
+  // Backend API base (mirrors DatasetUpload.svelte).
+  const apiBase = window.location.hostname === 'localhost'
+    ? 'http://localhost:8080'
+    : `https://${window.location.hostname}`;
+
+  // Uploaded datasets that are ready to visualize. Fetched on mount so the
+  // selector on the map can list them alongside the built-in presets.
+  type UploadedDataset = {
+    id: string;
+    name: string;
+    status: string;
+    total_records: number | null;
+  };
+  let uploadedDatasets: UploadedDataset[] = [];
+
+  // If the current view is backed by an uploaded dataset, remember its id so
+  // the selector can highlight the active option.
+  let currentDatasetId = '';
 
   // Preset datasets available for selection in the UI.
   // `value` must match the keys handled in Embedding.svelte's switch().
@@ -39,38 +59,54 @@
     // Support for backend API dataset loading
     if (searchParams.has('datasetId')) {
       const datasetId = searchParams.get('datasetId')!;
+      currentDatasetId = datasetId;
       // Use backend API to load dataset data
-      const apiBase = window.location.hostname === 'localhost'
-        ? 'http://localhost:8080'
-        : `https://${window.location.hostname}`;
       dataURL = `${apiBase}/api/v1/datasets/${datasetId}/data`;
       gridURL = `${apiBase}/api/v1/datasets/${datasetId}/grid`;
       console.log('Loading from backend API:', { dataURL, gridURL });
     }
   }
 
-  // Whether the current view is backed by a preset dataset (true) or a
-  // custom datasetId/dataURL (false). When false we hide the preset selector
-  // because switching would discard the custom data.
-  const isPresetDataset = !dataURL && !gridURL;
+  onMount(async () => {
+    try {
+      const response = await fetch(`${apiBase}/api/v1/datasets`);
+      if (!response.ok) {
+        return;
+      }
+      const data = (await response.json()) as UploadedDataset[];
+      uploadedDatasets = data.filter((d) => d.status === 'completed');
+    } catch (error) {
+      console.error('Failed to load uploaded datasets:', error);
+    }
+  });
 
-  // Switch to a preset dataset without a full page reload.
-  // Clears any custom dataURL/gridURL so Embedding falls back to the
-  // datasetName-based loading, updates the URL for shareability, and lets the
-  // {#key} block re-mount the Embedding component.
-  function selectPreset(event: Event) {
+  // Value currently selected in the dropdown: the active uploaded dataset id
+  // when viewing one, otherwise the active preset datasetName.
+  $: selectedDatasetValue = currentDatasetId || datasetName;
+
+  // Handle a selection from the combined (built-in + uploaded) dropdown.
+  // Built-in datasets switch in place without a reload; uploaded datasets
+  // require a reload so the backend-resolved data/grid URLs are fetched fresh.
+  function selectDataset(event: Event) {
     const target = event.target as HTMLSelectElement;
-    datasetName = target.value;
-    dataURL = null;
-    gridURL = null;
+    const value = target.value;
 
-    // Reflect the choice in the URL (replace, no reload / no history entry).
-    const url = new URL(window.location.href);
-    url.searchParams.set('dataset', datasetName);
-    url.searchParams.delete('datasetId');
-    url.searchParams.delete('dataURL');
-    url.searchParams.delete('gridURL');
-    window.history.replaceState({}, '', url.toString());
+    if (presetDatasets.some((ds) => ds.value === value)) {
+      datasetName = value;
+      dataURL = null;
+      gridURL = null;
+      currentDatasetId = '';
+
+      // Reflect the choice in the URL (replace, no reload / no history entry).
+      const url = new URL(window.location.href);
+      url.searchParams.set('dataset', datasetName);
+      url.searchParams.delete('datasetId');
+      url.searchParams.delete('dataURL');
+      url.searchParams.delete('gridURL');
+      window.history.replaceState({}, '', url.toString());
+    } else if (value) {
+      window.location.href = `/?datasetId=${encodeURIComponent(value)}`;
+    }
   }
 
   if (import.meta.env.MODE === 'notebook') {
@@ -88,20 +124,31 @@
 </style>
 
 <div class="mapview-page">
-  {#if isPresetDataset}
-    <div class="dataset-selector">
-      <label for="preset-dataset-select">Dataset</label>
-      <select
-        id="preset-dataset-select"
-        value={datasetName}
-        on:change={selectPreset}
-      >
+  <div class="dataset-selector">
+    <label for="preset-dataset-select">Dataset</label>
+    <select
+      id="preset-dataset-select"
+      value={selectedDatasetValue}
+      on:change={selectDataset}
+    >
+      <optgroup label="Built-in">
         {#each presetDatasets as ds}
           <option value={ds.value}>{ds.label}</option>
         {/each}
-      </select>
-    </div>
-  {/if}
+      </optgroup>
+      <optgroup label="Uploaded">
+        {#if uploadedDatasets.length === 0}
+          <option value="" disabled>No uploaded datasets yet</option>
+        {:else}
+          {#each uploadedDatasets as ds}
+            <option value={ds.id}>
+              {ds.name}{ds.total_records ? ` (${ds.total_records} rows)` : ''}
+            </option>
+          {/each}
+        {/if}
+      </optgroup>
+    </select>
+  </div>
 
   <div id="popper-tooltip-top" class="popper-tooltip hidden" role="tooltip">
     <span class="popper-content"></span>
